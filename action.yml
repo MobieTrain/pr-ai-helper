@@ -1,0 +1,11 @@
+name: 'Pull Request Auto Description'
+description: 'Generate a description for pull requests with OpenAI'
+inputs:
+  github-token:
+    description: 'The GITHUB_TOKEN secret'
+    required: true
+  open-ai-key:
+    required: true
+runs:
+  using: 'node16'
+  main: 'dist/index.js'
