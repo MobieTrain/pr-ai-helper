@@ -14,30 +14,15 @@ const getCommitTypesDescription = () => {
   ].join('\n');
 };
 
-const getDescriptionFormat = () => {
-  return [
-    '\t## What?',
-    '\t## Why?',
-    '\t## How?',
-    '\t## Testing?',
-    '\t## Anything Else?',
-  ].join('\n');
-};
-
-export const getPrompt = (
-  locale: string,
-  commits: string[],
-) => [
-  'Generate a concise pull request description written in present tense for the following code diff with the given specifications below:',
+export const getInitialPrompt = (locale: string, commits: string[]) => [
+  'I want you to act as a software engineer. Your job is to improve the quality of pull requests.',
+  'I want you to consider the following specifications for your answers:',
   `Message language: ${locale}`,
-  `Format: Markdown`,
+  `Format: GitHub Markdown`,
   `Commit list:`,
   commits.map(commit => `\t${commit}`).join('\n'),
-  'Include a what: explanation of the changes made.',
-  'Include a how: point out significant design decisions.',
-  'Your entire response will be passed directly into the pull request description.',
   'Consider the following commit preffixes:',
   getCommitTypesDescription(),
-    'Output the response in the following format:',
-  getDescriptionFormat(),
 ].filter(Boolean).join('\n');
+
+export const composePrompts = (...prompts: string[]) => prompts.join('\n\n');

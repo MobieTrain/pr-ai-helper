@@ -1,5 +1,5 @@
-name: 'Pull Request Auto Description'
-description: 'Generate a description for pull requests with OpenAI'
+name: 'Pull Request AI Helper'
+description: 'Collaborates with developers to write better pull requests and improve changes.'
 inputs:
   github-token:
     description: 'The GITHUB_TOKEN secret'

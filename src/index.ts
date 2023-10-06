@@ -1,8 +1,9 @@
 import * as core from '@actions/core';
-import { getDescription } from "./ai";
-import { getCommits, getDiff } from "./git-diff";
+import { getCompletionContent, getSummarizedCodeDiff } from "./ai";
+import { getCommits, getDiffChunks } from "./git-diff";
 import { getBranch, getPullRequest, getRepo, updatePullRequestDescription } from './github';
-import { getPrompt } from "./prompt";
+import { getPrompt as getDescriptionPrompt } from "./pr-auto-description";
+import { composePrompts, getInitialPrompt } from "./prompt";
 
 (async () => {
   try {
@@ -11,13 +12,18 @@ import { getPrompt } from "./prompt";
     if (!pullRequest) throw new Error('No pull request found');
 
     const commits = await getCommits(repo, pullRequest);
-    const diff = await getDiff(repo, pullRequest);
-    core.info(`Diff:\n\n${diff}\n\nGenerating prompt...`);
+    const diffChunks = await getDiffChunks(repo, pullRequest);
+    core.info(`Diff:\n\n${diffChunks}\n\nGenerating prompt...`);
 
-    const prompt = getPrompt('en', commits);
-    core.info(`Prompt:\n\n${prompt}\n\nGenerating description...`);
+    const initialPrompt = getInitialPrompt('en', commits);
+    const descriptionPrompt = getDescriptionPrompt();
 
-    const detailedDescription = await getDescription(prompt, diff);
+    const prompt = composePrompts(initialPrompt, descriptionPrompt, ...diffChunks);
+    core.info(`Prompt:\n\n${prompt}\n\nGetting completions...`);
+
+    const summaries = await getSummarizedCodeDiff(diffChunks, [initialPrompt]);
+
+    const detailedDescription = await getCompletionContent(summaries, [initialPrompt, descriptionPrompt]);
 
     const branch = getBranch();
     const description = `## Ticket\n\n${branch}\n\n${detailedDescription}`;

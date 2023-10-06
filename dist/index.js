@@ -11420,20 +11420,37 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getDescription = void 0;
+exports.getCompletionContent = exports.getSummarizedCodeDiff = exports.openai = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const openai_1 = __importDefault(__nccwpck_require__(47));
-const openai = new openai_1.default({
+exports.openai = new openai_1.default({
     apiKey: core.getInput('open-ai-key', { required: true }),
 });
-const getDescription = async (prompt, diff) => {
-    const chatCompletion = await openai.chat.completions.create({
-        messages: [{ role: "system", content: prompt }, { role: "user", content: diff }],
+const getSummarizedCodeDiff = async (diffChunks, systemPrompts) => {
+    const summaries = await Promise.all(diffChunks.map((chunk) => exports.openai.chat.completions.create({
         model: "gpt-3.5-turbo",
+        messages: [
+            ...systemPrompts
+                .map((systemPrompt) => ({ role: "system", content: systemPrompt })),
+            { role: "user", content: 'Please summarize the following code diff:' },
+            { role: "user", content: chunk },
+        ]
+    })));
+    return summaries.map((summary) => { var _a; return (_a = summary.choices[0].message.content) !== null && _a !== void 0 ? _a : ''; });
+};
+exports.getSummarizedCodeDiff = getSummarizedCodeDiff;
+const getCompletionContent = async (diffChunks, systemPrompts) => {
+    const chatCompletion = await exports.openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [
+            ...systemPrompts
+                .map((systemPrompt) => ({ role: "system", content: systemPrompt })),
+            ...diffChunks.map((diff) => ({ role: "user", content: diff })),
+        ]
     });
     return chatCompletion.choices[0].message.content;
 };
-exports.getDescription = getDescription;
+exports.getCompletionContent = getCompletionContent;
 
 
 /***/ }),
@@ -11444,7 +11461,7 @@ exports.getDescription = getDescription;
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getDiff = exports.getCommits = void 0;
+exports.getDiffChunks = exports.getCommits = void 0;
 const github_1 = __nccwpck_require__(978);
 const getCommits = async (repo, pullRequest) => {
     const octokit = (0, github_1.getOctokit)();
@@ -11457,9 +11474,9 @@ const getCommits = async (repo, pullRequest) => {
     return messages;
 };
 exports.getCommits = getCommits;
-const getDiff = async (repo, pullRequest) => {
+const getDiffChunks = async (repo, pullRequest) => {
     const octokit = (0, github_1.getOctokit)();
-    const diff = await octokit.rest.pulls.get({
+    const diffFile = await octokit.rest.pulls.get({
         owner: repo.owner,
         repo: repo.repo,
         pull_number: pullRequest.number,
@@ -11467,9 +11484,10 @@ const getDiff = async (repo, pullRequest) => {
             format: 'diff'
         }
     });
-    return diff.data;
+    const diff = diffFile.data;
+    return diff.split('diff --git');
 };
-exports.getDiff = getDiff;
+exports.getDiffChunks = getDiffChunks;
 
 
 /***/ }),
@@ -11575,6 +11593,7 @@ const core = __importStar(__nccwpck_require__(2186));
 const ai_1 = __nccwpck_require__(1744);
 const git_diff_1 = __nccwpck_require__(8462);
 const github_1 = __nccwpck_require__(978);
+const pr_auto_description_1 = __nccwpck_require__(9482);
 const prompt_1 = __nccwpck_require__(6495);
 (async () => {
     try {
@@ -11583,11 +11602,14 @@ const prompt_1 = __nccwpck_require__(6495);
         if (!pullRequest)
             throw new Error('No pull request found');
         const commits = await (0, git_diff_1.getCommits)(repo, pullRequest);
-        const diff = await (0, git_diff_1.getDiff)(repo, pullRequest);
-        core.info(`Diff:\n\n${diff}\n\nGenerating prompt...`);
-        const prompt = (0, prompt_1.getPrompt)('en', commits);
-        core.info(`Prompt:\n\n${prompt}\n\nGenerating description...`);
-        const detailedDescription = await (0, ai_1.getDescription)(prompt, diff);
+        const diffChunks = await (0, git_diff_1.getDiffChunks)(repo, pullRequest);
+        core.info(`Diff:\n\n${diffChunks}\n\nGenerating prompt...`);
+        const initialPrompt = (0, prompt_1.getInitialPrompt)('en', commits);
+        const descriptionPrompt = (0, pr_auto_description_1.getPrompt)();
+        const prompt = (0, prompt_1.composePrompts)(initialPrompt, descriptionPrompt, ...diffChunks);
+        core.info(`Prompt:\n\n${prompt}\n\nGetting completions...`);
+        const summaries = await (0, ai_1.getSummarizedCodeDiff)(diffChunks, [initialPrompt]);
+        const detailedDescription = await (0, ai_1.getCompletionContent)(summaries, [initialPrompt, descriptionPrompt]);
         const branch = (0, github_1.getBranch)();
         const description = `## Ticket\n\n${branch}\n\n${detailedDescription}`;
         core.info(`Description:\n\n${description}`);
@@ -11603,13 +11625,42 @@ const prompt_1 = __nccwpck_require__(6495);
 
 /***/ }),
 
-/***/ 6495:
+/***/ 9482:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getPrompt = void 0;
+const getDescriptionFormat = () => {
+    return [
+        '\t## What?',
+        '\t## Why?',
+        '\t## How?',
+        '\t## Testing?',
+        '\t## Anything Else?',
+    ].join('\n');
+};
+const getPrompt = () => [
+    'Generate a concise pull request description written in present tense using the following summaries of a code diff with the given specifications below:',
+    'Include a what: explanation of the changes made.',
+    'Include a how: point out significant design decisions.',
+    'Output the response in the following format:',
+    getDescriptionFormat(),
+    'Your responses will be passed directly into the pull request description or comments.',
+].filter(Boolean).join('\n');
+exports.getPrompt = getPrompt;
+
+
+/***/ }),
+
+/***/ 6495:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.composePrompts = exports.getInitialPrompt = void 0;
 const getCommitTypesDescription = () => {
     return [
         `\tdocs: 'Documentation only changes'`,
@@ -11625,30 +11676,19 @@ const getCommitTypesDescription = () => {
         `\tfix: 'A bug fix'`,
     ].join('\n');
 };
-const getDescriptionFormat = () => {
-    return [
-        '\t## What?',
-        '\t## Why?',
-        '\t## How?',
-        '\t## Testing?',
-        '\t## Anything Else?',
-    ].join('\n');
-};
-const getPrompt = (locale, commits) => [
-    'Generate a concise pull request description written in present tense for the following code diff with the given specifications below:',
+const getInitialPrompt = (locale, commits) => [
+    'I want you to act as a software engineer. Your job is to improve the quality of pull requests.',
+    'I want you to consider the following specifications for your answers:',
     `Message language: ${locale}`,
-    `Format: Markdown`,
+    `Format: GitHub Markdown`,
     `Commit list:`,
     commits.map(commit => `\t${commit}`).join('\n'),
-    'Include a what: explanation of the changes made.',
-    'Include a how: point out significant design decisions.',
-    'Your entire response will be passed directly into the pull request description.',
     'Consider the following commit preffixes:',
     getCommitTypesDescription(),
-    'Output the response in the following format:',
-    getDescriptionFormat(),
 ].filter(Boolean).join('\n');
-exports.getPrompt = getPrompt;
+exports.getInitialPrompt = getInitialPrompt;
+const composePrompts = (...prompts) => prompts.join('\n\n');
+exports.composePrompts = composePrompts;
 
 
 /***/ }),

@@ -1,6 +1,5 @@
 import { PullRequest, Repo, getOctokit } from "./github";
 
-
 export const getCommits = async (repo: Repo, pullRequest: PullRequest) => {
   const octokit = getOctokit();
   const commits = await octokit.rest.pulls.listCommits({
@@ -14,9 +13,9 @@ export const getCommits = async (repo: Repo, pullRequest: PullRequest) => {
   return messages;
 }
 
-export const getDiff = async (repo: Repo, pullRequest: PullRequest) => {
+export const getDiffChunks = async (repo: Repo, pullRequest: PullRequest) => {
   const octokit = getOctokit();
-  const diff = await octokit.rest.pulls.get({
+  const diffFile = await octokit.rest.pulls.get({
     owner: repo.owner,
     repo: repo.repo,
     pull_number: pullRequest.number,
@@ -25,5 +24,6 @@ export const getDiff = async (repo: Repo, pullRequest: PullRequest) => {
     }
   });
 
-  return diff.data as unknown as string;
+  const diff = diffFile.data as unknown as string;
+  return diff.split('diff --git');
 };
